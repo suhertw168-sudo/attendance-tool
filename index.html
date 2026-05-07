@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>員工考勤表轉換工具</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap');
+:root{--bg:#f4f0e8;--card:#fffcf5;--ink:#1c1a16;--blue:#1a3a8f;--blue-lt:#e8edf8;--border:#c8b89a;--muted:#7a6e5f;--red:#c84b31;--green:#2d6a4f;--grid:repeating-linear-gradient(0deg,transparent,transparent 27px,rgba(200,184,154,.25) 27px,rgba(200,184,154,.25) 28px),repeating-linear-gradient(90deg,transparent,transparent 27px,rgba(200,184,154,.25) 27px,rgba(200,184,154,.25) 28px)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans TC',sans-serif;background:var(--bg);background-image:var(--grid);color:var(--ink);min-height:100vh;padding:40px 20px}
+.wrap{max-width:700px;margin:0 auto}
+.stamp{font-family:'Space Mono',monospace;font-size:10px;letter-spacing:.2em;color:var(--red);border:1.5px solid var(--red);display:inline-block;padding:3px 10px;margin-bottom:14px;transform:rotate(-1deg)}
+h1{font-size:32px;font-weight:700;letter-spacing:-.02em;line-height:1.2;margin-bottom:8px}
+h1 em{color:var(--blue);font-style:normal}
+.lead{font-size:13px;color:var(--muted);border-left:3px solid var(--border);padding-left:12px;line-height:1.8;margin-bottom:32px}
+#loadBanner{background:var(--blue);color:#fff;padding:14px 20px;border-radius:2px;font-size:13px;font-family:'Space Mono',monospace;display:flex;align-items:center;gap:12px;margin-bottom:20px;transition:background .3s}
+#loadBanner.done{background:var(--green)}
+#loadBanner.hide{display:none}
+.spin{width:16px;height:16px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+.card{background:var(--card);border:1.5px solid var(--border);border-radius:2px;padding:28px 32px;margin-bottom:18px;box-shadow:4px 4px 0 var(--border);position:relative}
+.card[data-n]::before{content:attr(data-n);font-family:'Space Mono',monospace;font-size:56px;font-weight:700;color:var(--border);position:absolute;top:-8px;right:18px;line-height:1;user-select:none}
+.card-title{font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.card-title::before{content:'';width:18px;height:2px;background:var(--red)}
+.hint{background:rgba(200,184,154,.12);border-left:3px solid var(--red);padding:10px 14px;font-size:12px;color:var(--muted);line-height:1.9;margin-bottom:16px}
+.hint code{font-family:'Space Mono',monospace;background:#fff;padding:1px 5px;border:1px solid var(--border);font-size:10px;color:var(--ink)}
+.drop{border:2px dashed var(--border);padding:44px 20px;text-align:center;cursor:pointer;transition:all .2s;position:relative;border-radius:2px}
+.drop:hover,.drop.over{border-color:var(--blue);background:var(--blue-lt)}
+.drop-icon{font-size:36px;margin-bottom:10px;opacity:.5}
+.drop-text{font-size:15px;font-weight:500}
+.drop-sub{font-size:12px;color:var(--muted);margin-top:6px;font-family:'Space Mono',monospace}
+.file-info{display:none;align-items:center;gap:12px;padding:12px 16px;background:rgba(45,106,79,.07);border:1.5px solid var(--green);border-radius:2px;margin-top:14px}
+.file-info.show{display:flex}
+.fi-name{font-size:13px;font-weight:500}
+.fi-meta{font-size:11px;color:var(--muted);font-family:'Space Mono',monospace}
+.settings{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+.s-item{display:flex;flex-direction:column;gap:4px}
+.s-label{font-size:11px;color:var(--muted);font-family:'Space Mono',monospace}
+.s-input{padding:7px 10px;border:1.5px solid var(--border);border-radius:2px;font-family:'Noto Sans TC',sans-serif;font-size:13px;background:#fff;color:var(--ink)}
+.s-input:focus{outline:none;border-color:var(--blue)}
+.alert-box{display:none;padding:10px 14px;font-size:12px;font-family:'Space Mono',monospace;border-radius:2px;margin-top:12px}
+.alert-box.err{background:rgba(200,75,49,.08);border:1.5px solid var(--red);color:var(--red);display:block}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+.stat{border:1.5px solid var(--border);padding:12px;text-align:center;background:#fff}
+.stat-n{font-family:'Space Mono',monospace;font-size:26px;font-weight:700;color:var(--blue)}
+.stat-l{font-size:11px;color:var(--muted);margin-top:3px}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);margin-top:14px}
+table{width:100%;border-collapse:collapse;font-size:11px;font-family:'Space Mono',monospace;min-width:480px}
+thead tr{background:var(--ink)}
+th{padding:7px 10px;text-align:left;color:#fff;font-weight:400;white-space:nowrap}
+td{padding:6px 10px;border-bottom:1px solid var(--border);color:var(--muted)}
+tr:last-child td{border-bottom:none}
+.more{text-align:center;padding:8px;font-size:11px;color:var(--muted);background:rgba(200,184,154,.1);font-family:'Space Mono',monospace}
+.btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:14px;font-family:'Noto Sans TC',sans-serif;font-size:15px;font-weight:700;cursor:pointer;border:2px solid var(--ink);background:var(--ink);color:#fff;border-radius:2px;transition:all .15s;box-shadow:4px 4px 0 var(--red);letter-spacing:.04em}
+.btn:hover:not(:disabled){transform:translate(-2px,-2px);box-shadow:6px 6px 0 var(--red)}
+.btn:active:not(:disabled){transform:translate(2px,2px);box-shadow:2px 2px 0 var(--red)}
+.btn:disabled{opacity:.4;cursor:not-allowed;box-shadow:2px 2px 0 var(--border)}
+.btn.done{background:var(--green);border-color:var(--green);box-shadow:4px 4px 0 #1a3d2b}
+.prog-wrap{display:none;margin-top:14px}
+.prog-wrap.show{display:block}
+.prog-bar{height:5px;background:var(--border);overflow:hidden;margin-bottom:7px}
+.prog-fill{height:100%;background:var(--blue);width:0%;transition:width .3s}
+.prog-txt{font-size:11px;color:var(--muted);font-family:'Space Mono',monospace}
+.log{display:none;font-family:'Space Mono',monospace;font-size:10px;background:var(--ink);color:#7ec8a4;padding:14px;max-height:180px;overflow-y:auto;line-height:1.9;border-radius:2px;margin-top:10px}
+.log.show{display:block}
+.log .e{color:#ff8a80}.log .i{color:#80d8ff}
+.result{display:none;text-align:center;padding:28px;border:2px solid var(--green);background:rgba(45,106,79,.05);border-radius:2px;margin-top:18px;box-shadow:4px 4px 0 var(--green)}
+.result.show{display:block}
+.result-icon{font-size:44px;margin-bottom:10px}
+.result-title{font-size:18px;font-weight:700;margin-bottom:4px}
+.result-meta{font-size:11px;color:var(--muted);font-family:'Space Mono',monospace;margin-bottom:18px}
+.btn-dl{display:inline-flex;align-items:center;gap:8px;padding:12px 28px;background:var(--green);color:#fff;border:2px solid var(--green);border-radius:2px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:4px 4px 0 #1a3d2b;transition:all .15s;font-family:'Noto Sans TC',sans-serif}
+.btn-dl:hover{transform:translate(-2px,-2px);box-shadow:6px 6px 0 #1a3d2b}
+footer{margin-top:40px;text-align:center;font-size:11px;color:var(--muted);font-family:'Space Mono',monospace;border-top:1px solid var(--border);padding-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header style="margin-bottom:32px">
+    <div class="stamp">HR Tool · 考勤管理</div>
+    <h1>打卡紀錄 → <em>員工考勤表</em></h1>
+    <p class="lead">上傳打卡紀錄 Excel，自動擷取每日最早上班 / 最晚下班<br>在瀏覽器內直接運算，不上傳伺服器，<strong>不需安裝任何軟體</strong></p>
+  </header>
+
+  <div id="loadBanner">
+    <div class="spin" id="loadSpin"></div>
+    <span id="loadMsg">正在載入 Python 環境，首次約需 15–40 秒…</span>
+  </div>
+
+  <div class="card" data-n="1">
+    <div class="card-title">上傳打卡紀錄</div>
+    <div class="hint">自動讀取第一個工作表的 <code>A~H</code> 欄位<br>
+    必要欄位：<code>A 員工編號</code> <code>B 姓名</code> <code>C 部門</code> <code>D 打卡日期</code> <code>G 上班打卡時間</code> <code>H 下班打卡時間</code></div>
+    <div class="drop" id="dropZone" onclick="document.getElementById('fileInput').click()">
+      <div class="drop-icon">📂</div>
+      <div class="drop-text">點擊選擇 或 拖曳 Excel 至此</div>
+      <div class="drop-sub">支援 .xlsx / .xls</div>
+    </div>
+    <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none">
+    <div class="file-info" id="fileInfo"><span>📊</span><div><div class="fi-name" id="fiName"></div><div class="fi-meta" id="fiMeta"></div></div></div>
+    <div class="alert-box" id="alertBox"></div>
+  </div>
+
+  <div class="card" data-n="2" id="previewCard" style="display:none">
+    <div class="card-title">資料預覽</div>
+    <div class="stats" id="statsGrid"></div>
+    <div class="tbl-wrap" id="previewWrap"></div>
+  </div>
+
+  <div class="card" data-n="3" id="convertCard" style="display:none">
+    <div class="card-title">設定 & 產生考勤表</div>
+    <div class="settings">
+      <div class="s-item"><span class="s-label">標準上班時間</span><input class="s-input" type="time" id="stdIn" value="10:00"></div>
+      <div class="s-item"><span class="s-label">標準下班時間</span><input class="s-input" type="time" id="stdOut" value="19:00"></div>
+      <div class="s-item"><span class="s-label">遲到寬容（分鐘）</span><input class="s-input" type="number" id="grace" value="0" min="0" max="60"></div>
+      <div class="s-item"><span class="s-label">公司名稱</span><input class="s-input" type="text" id="company" value="衣庫國際服裝有限公司"></div>
+    </div>
+    <br>
+    <button class="btn" id="convertBtn" onclick="doConvert()" disabled>⚡ 立即轉換並下載</button>
+    <div class="prog-wrap" id="progWrap">
+      <div class="prog-bar"><div class="prog-fill" id="progFill"></div></div>
+      <div class="prog-txt" id="progTxt">處理中…</div>
+    </div>
+    <div class="log" id="logBox"></div>
+  </div>
+
+  <div class="result" id="resultCard">
+    <div class="result-icon">✅</div>
+    <div class="result-title">考勤表已產生！</div>
+    <div class="result-meta" id="resultMeta"></div>
+    <button class="btn-dl" onclick="triggerDl()">⬇ 下載 Excel 考勤表</button>
+  </div>
+
+  <footer>純瀏覽器運算 · 資料不上傳伺服器 · Powered by Pyodide + openpyxl</footer>
+</div>
+
+<script>
+let pyodide=null, parsedRows=[], fileBytes=null, outputBytes=null, outputName='';
+
+// ── Init Pyodide ───────────────────────────────────────────────────────────────
+(async()=>{
+  try{
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js';
+    document.head.appendChild(s);
+    await new Promise(r=>s.onload=r);
+    setLoadMsg('載入 Python 核心…');
+    pyodide=await loadPyodide({indexURL:'https://cdn.jsdelivr.net/pyodide/v0.25.1/full/'});
+    setLoadMsg('安裝 openpyxl 套件…');
+    await pyodide.loadPackage('micropip');
+    await pyodide.runPythonAsync(`import micropip\nawait micropip.install('openpyxl')`);
+    const b=document.getElementById('loadBanner');
+    b.classList.add('done');
+    document.getElementById('loadSpin').style.display='none';
+    setLoadMsg('✓ Python 環境就緒');
+    setTimeout(()=>b.classList.add('hide'),3000);
+    if(parsedRows.length) document.getElementById('convertBtn').disabled=false;
+  }catch(e){setLoadMsg('❌ 載入失敗：'+e.message)}
+})();
+
+function setLoadMsg(m){document.getElementById('loadMsg').textContent=m}
+
+// ── File ───────────────────────────────────────────────────────────────────────
+const dz=document.getElementById('dropZone');
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('over')});
+dz.addEventListener('dragleave',()=>dz.classList.remove('over'));
+dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('over');if(e.dataTransfer.files[0])loadFile(e.dataTransfer.files[0])});
+document.getElementById('fileInput').addEventListener('change',e=>{if(e.target.files[0])loadFile(e.target.files[0])});
+
+async function loadFile(file){
+  document.getElementById('alertBox').className='alert-box';
+  const buf=await file.arrayBuffer();
+  fileBytes=new Uint8Array(buf);
+  document.getElementById('fiName').textContent=file.name;
+  document.getElementById('fiMeta').textContent=`${(file.size/1024).toFixed(1)} KB`;
+  document.getElementById('fileInfo').classList.add('show');
+  if(!pyodide){showAlert('Python 環境尚未就緒，請稍候');return}
+  try{
+    pyodide.globals.set('_fb', fileBytes);
+    const res=await pyodide.runPythonAsync(`
+import io, json, datetime
+from openpyxl import load_workbook
+
+def v2s(v):
+    if v is None: return ''
+    if isinstance(v, datetime.time): return f"{v.hour:02d}:{v.minute:02d}"
+    if isinstance(v, datetime.datetime): return f"{v.hour:02d}:{v.minute:02d}"
+    if isinstance(v, datetime.date): return f"{v.year}/{v.month:02d}/{v.day:02d}"
+    return str(v)
+
+wb = load_workbook(io.BytesIO(bytes(_fb)), data_only=True)
+ws = wb.worksheets[0]
+hdrs = [v2s(ws.cell(1,c).value) for c in range(1,9)]
+rows = []
+for r in range(2, ws.max_row+1):
+    row = [ws.cell(r,c).value for c in range(1,9)]
+    if all(v is None for v in row): continue
+    rows.append([v2s(v) for v in row])
+json.dumps({"h": hdrs, "r": rows, "sheet": ws.title})
+`);
+    const d=JSON.parse(res);
+    parsedRows=d.r;
+    document.getElementById('fiMeta').textContent+=` · ${d.r.length} 筆 · 工作表：${d.sheet}`;
+    showPreview(d.h, d.r);
+    document.getElementById('previewCard').style.display='block';
+    document.getElementById('convertCard').style.display='block';
+    document.getElementById('convertBtn').disabled=false;
+  }catch(e){
+    showAlert('讀取失敗：'+e.message);
+    console.error(e);
+  }
+}
+
+function showPreview(hdrs,rows){
+  const fi=n=>hdrs.findIndex(h=>h&&h.includes(n));
+  const ec=fi('員工編號'); const dc=fi('打卡日期'); const pc=fi('部門');
+  const empS=new Set(ec>=0?rows.map(r=>r[ec]):[]);
+  const dateS=new Set(dc>=0?rows.map(r=>r[dc]):[]);
+  const deptS=new Set(pc>=0?rows.map(r=>r[pc]):[]);
+  document.getElementById('statsGrid').innerHTML=
+    `<div class="stat"><div class="stat-n">${empS.size||'?'}</div><div class="stat-l">員工</div></div>
+     <div class="stat"><div class="stat-n">${dateS.size||'?'}</div><div class="stat-l">打卡日數</div></div>
+     <div class="stat"><div class="stat-n">${deptS.size||'?'}</div><div class="stat-l">部門</div></div>`;
+  const th=hdrs.map(h=>`<th>${h}</th>`).join('');
+  const tr=rows.slice(0,5).map(r=>`<tr>${hdrs.map((_,i)=>`<td>${r[i]||''}</td>`).join('')}</tr>`).join('');
+  const more=rows.length>5?`<div class="more">…共 ${rows.length} 筆</div>`:'';
+  document.getElementById('previewWrap').innerHTML=`<table><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table>${more}`;
+}
+
+function showAlert(msg){
+  const el=document.getElementById('alertBox');
+  el.textContent='⚠ '+msg; el.className='alert-box err';
+}
+
+// ── Convert ────────────────────────────────────────────────────────────────────
+async function doConvert(){
+  const btn=document.getElementById('convertBtn');
+  btn.disabled=true;
+  document.getElementById('progWrap').classList.add('show');
+  document.getElementById('logBox').innerHTML='';
+  document.getElementById('logBox').classList.add('show');
+  document.getElementById('resultCard').classList.remove('show');
+  outputBytes=null;
+
+  const stdIn  = document.getElementById('stdIn').value  || '10:00';
+  const stdOut = document.getElementById('stdOut').value || '19:00';
+  const grace  = parseInt(document.getElementById('grace').value) || 0;
+
+  setProgress(5,'傳送資料…');
+  addLog('開始轉換…','i');
+
+  try{
+    // Pass data to Python
+    pyodide.globals.set('_rows_json', JSON.stringify(parsedRows));
+    pyodide.globals.set('_std_in',  stdIn);
+    pyodide.globals.set('_std_out', stdOut);
+    pyodide.globals.set('_grace',   grace);
+
+    setProgress(15,'解析打卡紀錄…');
+
+    // Step 1: Parse attendance data
+    const parseResult = await pyodide.runPythonAsync(`
+import json, re, datetime, itertools
+
+def pt(v):
+    if not v: return None
+    if isinstance(v, datetime.time): return v.hour*60+v.minute
+    s = str(v).strip()
+    if s in ('--','','None'): return None
+    m = re.search(r'(\\d{1,2}):(\\d{2})', s)
+    return int(m.group(1))*60+int(m.group(2)) if m else None
+
+def fm(t):
+    return f"{t//60:02d}:{t%60:02d}" if t is not None else ''
+
+def parse_date(v):
+    s = str(v)
+    m = re.search(r'(\\d{4})[/\\-](\\d{1,2})[/\\-](\\d{1,2})', s)
+    if m: return f"{int(m.group(3)):02d}", int(m.group(1)), int(m.group(2))
+    return None, None, None
+
+rows  = json.loads(_rows_json)
+sim   = pt(_std_in)  or 10*60
+som   = pt(_std_out) or 19*60
+gr    = int(_grace)
+
+# Fixed columns: A=0,B=1,C=2,D=3,G=6,H=7
+CI_EMP=0; CI_NAME=1; CI_DEPT=2; CI_DATE=3; CI_IN=6; CI_OUT=7
+
+map_in={}; map_out={}; ei={}; year=None; month=None
+
+for row in rows:
+    if len(row) < 8: continue
+    eid   = str(row[CI_EMP]).strip()
+    name  = str(row[CI_NAME]).strip()
+    dept  = str(row[CI_DEPT]).strip()
+    day, y, mo = parse_date(row[CI_DATE])
+    in_v  = str(row[CI_IN]).strip()
+    out_v = str(row[CI_OUT]).strip()
+    if not eid or not day: continue
+    if not year and y: year, month = y, mo
+    key = (eid, day)
+    t_in  = pt(in_v)  if in_v  not in ('--','','None') else None
+    t_out = pt(out_v) if out_v not in ('--','','None') else None
+    if t_in  is not None: map_in.setdefault(key,  []).append(t_in)
+    if t_out is not None: map_out.setdefault(key, []).append(t_out)
+    ei[eid] = {'name': name, 'dept': dept}
+
+lookup = {}; emp_stats = {}
+for key in set(map_in)|set(map_out):
+    eid, day = key
+    bi = min(map_in.get(key,  [])) if map_in.get(key)  else None
+    bo = max(map_out.get(key, [])) if map_out.get(key) else None
+    late  = max(0, bi-sim-gr) if bi is not None and bi>sim+gr else 0
+    early = max(0, som-bo)    if bo is not None and bo<som-gr else 0
+    lookup.setdefault(eid, {})[day] = {'in': fm(bi), 'out': fm(bo)}
+    if eid not in emp_stats:
+        emp_stats[eid] = {'workDays':0,'lateCount':0,'lateTotal':0,'earlyCount':0,'earlyTotal':0}
+    s = emp_stats[eid]
+    if bi is not None: s['workDays'] += 1
+    if late:  s['lateCount'] += 1; s['lateTotal']  += late
+    if early: s['earlyCount'] += 1; s['earlyTotal'] += early
+
+employees = [{'id':k,'name':v['name'],'dept':v['dept']} for k,v in sorted(ei.items())]
+
+if not year:
+    today = datetime.date.today(); year = today.year; month = today.month
+
+json.dumps({'employees': employees, 'lookup': lookup,
+            'emp_stats': emp_stats, 'year': year, 'month': month,
+            'row_count': len(rows), 'emp_count': len(employees)})
+`);
+
+    const pd = JSON.parse(parseResult);
+    addLog(`✓ 解析完成：${pd.row_count} 筆原始紀錄，${pd.emp_count} 位員工，${pd.year}/${pd.month}`, 'i');
+    setProgress(35,'建立考勤表格式…');
+
+    // Step 2: Build xlsx
+    pyodide.globals.set('_parse_json', parseResult);
+
+    const xlsxResult = await pyodide.runPythonAsync(`
+import json, io, base64, datetime, calendar, re, itertools
+from openpyxl import Workbook
+from openpyxl.styles import Font, Border, Side, Alignment
+from openpyxl.utils import get_column_letter
+
+pd2 = json.loads(_parse_json)
+employees = pd2['employees']
+lookup    = pd2['lookup']
+emp_stats = pd2['emp_stats']
+year      = pd2['year']
+month     = pd2['month']
+
+BL='0000FF'; BK='000000'
+WD=['日','一','二','三','四','五','六']
+p2 = lambda n: str(n).zfill(2)
+
+def bd(t=True,b=True,l=True,r=True):
+    def s(on): return Side(style='thin',color=BL) if on else Side(style=None)
+    return Border(top=s(t),bottom=s(b),left=s(l),right=s(r))
+
+def sb(cell, val='', bold=False, sz=9, ha='center', wrap=False, bT=True,bB=True,bL=True,bR=True):
+    cell.value = val
+    cell.font  = Font(name='Arial', size=sz, bold=bold, color=BL)
+    cell.alignment = Alignment(horizontal=ha, vertical='center', wrap_text=wrap)
+    cell.border = bd(bT,bB,bL,bR)
+
+def mb(ws,r1,c1,r2,c2,val='',bold=False,sz=9,ha='center',wrap=False,bT=True,bB=True,bL=True,bR=True):
+    ws.merge_cells(start_row=r1,start_column=c1,end_row=r2,end_column=c2)
+    for r in range(r1,r2+1):
+        for c in range(c1,c2+1):
+            cell=ws.cell(r,c)
+            cell.font=Font(name='Arial',size=sz,bold=bold,color=BL)
+            cell.alignment=Alignment(horizontal=ha,vertical='center',wrap_text=wrap)
+            cell.border=bd((r==r1)and bT,(r==r2)and bB,(c==c1)and bL,(c==c2)and bR)
+    ws.cell(r1,c1).value=val
+
+def mk(ws,r1,c1,r2,c2,val='',sz=9):
+    ws.merge_cells(start_row=r1,start_column=c1,end_row=r2,end_column=c2)
+    for r in range(r1,r2+1):
+        for c in range(c1,c2+1):
+            cell=ws.cell(r,c)
+            cell.font=Font(name='Arial',size=sz,color=BK)
+            cell.alignment=Alignment(horizontal='center',vertical='center')
+            cell.border=bd(r==r1,r==r2,c==c1,c==c2)
+    ws.cell(r1,c1).value=val
+
+def pt2(v):
+    if not v: return None
+    m=re.search(r'(\\d{1,2}):(\\d{2})',str(v))
+    return int(m.group(1))*60+int(m.group(2)) if m else None
+
+dim   = calendar.monthrange(year,month)[1]
+adays = [{'day':p2(d),'wd':WD[datetime.date(year,month,d).isoweekday()%7]} for d in range(1,dim+1)]
+dlabel= f"{year}-{p2(month)}-01~{year}-{p2(month)}-{p2(dim)}"
+nows  = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+wb = Workbook(); ws = wb.active; ws.title = '員工考勤表'
+
+# Column widths (14 cols per block + separator)
+# 各欄合計寬度對齊：上班7.13、下班7.12、下午上班7.13、下午下班7.12、簽到7.13、簽退7.13
+BW = [4.99, 4.28, 2.85, 1.42, 4.28, 1.42, 2.85, 4.28, 4.99, 2.13, 5.85, 1.28, 1.42, 5.71]
+ci2 = 1
+for b in range(3):
+    for w in BW:
+        ws.column_dimensions[get_column_letter(ci2)].width = w; ci2+=1
+    if b<2:
+        ws.column_dimensions[get_column_letter(ci2)].width = 1.28; ci2+=1
+
+HH  = [5.25,11.25,17.25,13.5,13.5,13.5,13.5,13.5,7.5,17.25,13.5,13.5]
+BS  = [1,16,31]
+PH  = 12+dim+1
+
+# Group employees by ID prefix, force page break between groups
+def get_pfx(eid):
+    m=re.match(r'^[A-Za-z]+',str(eid))
+    return m.group() if m else ''
+
+pages=[]
+for pfx,grp in itertools.groupby(employees, key=lambda e:get_pfx(e['id'])):
+    g=list(grp)
+    for i in range(0,len(g),3):
+        slot=g[i:i+3]
+        while len(slot)<3: slot.append(None)
+        pages.append(slot)
+
+for page, eg in enumerate(pages):
+    ro=page*PH; R=ro+1
+    for i,h in enumerate(HH): ws.row_dimensions[R+i].height=h
+    for d in range(dim): ws.row_dimensions[R+12+d].height=13.5
+    ws.row_dimensions[R+12+dim].height=7.5
+
+    mb(ws,R,1,R,11,'')
+    mb(ws,R,12,R+2,33,'員 工 考 勤 表',bold=True,sz=22)
+    mb(ws,R,34,R,44,'')
+    mb(ws,R+1,1,R+2,11,'')
+    mb(ws,R+1,34,R+1,44,f'考勤日期：{dlabel}',sz=9,ha='left')
+    mb(ws,R+2,34,R+2,44,f'製表時間：{nows}',sz=9,ha='left')
+
+    for bi,sc in enumerate(BS):
+        emp = eg[bi]
+        st  = emp_stats.get(emp['id'],{}) if emp else {}
+        if bi<2:
+            sepc=sc+14
+            ws.merge_cells(start_row=R+3,start_column=sepc,end_row=R+12+dim,end_column=sepc)
+
+        mb(ws,R+3,sc,   R+3,sc,   '部門')
+        mb(ws,R+3,sc+1, R+3,sc+7, emp['dept'] if emp else '', ha='left')
+        mb(ws,R+3,sc+8, R+3,sc+8, '姓名')
+        mb(ws,R+3,sc+9, R+3,sc+13,emp['name'] if emp else '', ha='left')
+        mb(ws,R+4,sc,   R+4,sc,   '日期')
+        mb(ws,R+4,sc+1, R+4,sc+7, dlabel, ha='left')
+        mb(ws,R+4,sc+8, R+4,sc+8, '工號')
+        mb(ws,R+4,sc+9, R+4,sc+13,emp['id'] if emp else '', ha='left')
+
+        mb(ws,R+5,sc,   R+6,sc,   '曠工\\n(天)',wrap=True)
+        mb(ws,R+5,sc+1, R+6,sc+1, '請假\\n(天)',wrap=True)
+        mb(ws,R+5,sc+2, R+6,sc+3, '出差\\n(天)',wrap=True)
+        mb(ws,R+5,sc+4, R+6,sc+4, '上班\\n(天)',wrap=True)
+        mb(ws,R+5,sc+5, R+5,sc+7, '加班(小時)')
+        mb(ws,R+5,sc+8, R+5,sc+10,'遲到')
+        mb(ws,R+5,sc+11,R+5,sc+13,'早退')
+        mb(ws,R+6,sc+5, R+6,sc+6, '正常')
+        sb(ws.cell(R+6,sc+7),'特殊')
+        sb(ws.cell(R+6,sc+8),'(次)')
+        mb(ws,R+6,sc+9, R+6,sc+10,'(分)')
+        mb(ws,R+6,sc+11,R+6,sc+12,'(次)')
+        sb(ws.cell(R+6,sc+13),'(分)')
+
+        sb(ws.cell(R+7,sc+0), 0 if emp else '')
+        sb(ws.cell(R+7,sc+1), 0 if emp else '')
+        mb(ws,R+7,sc+2, R+7,sc+3, 0 if emp else '')
+        sb(ws.cell(R+7,sc+4), st.get('workDays',0) if emp else '')
+        mb(ws,R+7,sc+5, R+7,sc+6, 0 if emp else '')
+        sb(ws.cell(R+7,sc+7), 0 if emp else '')
+        sb(ws.cell(R+7,sc+8), st.get('lateCount',0)  if emp else '')
+        mb(ws,R+7,sc+9, R+7,sc+10,st.get('lateTotal',0)  if emp else '')
+        mb(ws,R+7,sc+11,R+7,sc+12,st.get('earlyCount',0) if emp else '')
+        sb(ws.cell(R+7,sc+13),st.get('earlyTotal',0) if emp else '')
+
+        mb(ws,R+8, sc,R+8, sc+13,'',bT=False,bB=False)
+        mb(ws,R+9, sc,R+9, sc+13,'考   勤   表',bold=True,sz=11)
+        mb(ws,R+10,sc,   R+11,sc,   '日 星\\n期 期',wrap=True)
+        mb(ws,R+10,sc+1, R+10,sc+5, '上午')
+        mb(ws,R+10,sc+6, R+10,sc+9, '下午')
+        mb(ws,R+10,sc+10,R+10,sc+13,'加班')
+        mb(ws,R+11,sc+1, R+11,sc+2, '上班')
+        mb(ws,R+11,sc+3, R+11,sc+5, '下班')
+        mb(ws,R+11,sc+6, R+11,sc+7, '上班')
+        mb(ws,R+11,sc+8, R+11,sc+9, '下班')
+        mb(ws,R+11,sc+10,R+11,sc+11,'簽到')
+        mb(ws,R+11,sc+12,R+11,sc+13,'簽退')
+
+        el = lookup.get(emp['id'],{}) if emp else {}
+        for di, info in enumerate(adays):
+            dr  = R+12+di; day=info['day']; wd=info['wd']
+            d2  = el.get(day,{})
+            inv = d2.get('in','')  or ''
+            outv= d2.get('out','') or ''
+            om  = pt2(outv)
+            o_am = outv if om is not None and om<=12*60         else ''
+            o_pm = outv if om is not None and 12*60<om<=19*60+30 else ''
+            o_ot = outv if om is not None and om>19*60+30       else ''
+            sb(ws.cell(dr,sc), f"{day} {wd}")
+            mk(ws,dr,sc+1, dr,sc+2,  inv)
+            mk(ws,dr,sc+3, dr,sc+5,  o_am)
+            mk(ws,dr,sc+6, dr,sc+7,  '')
+            mk(ws,dr,sc+8, dr,sc+9,  o_pm)
+            mk(ws,dr,sc+10,dr,sc+11, o_ot)
+            mk(ws,dr,sc+12,dr,sc+13, '')
+
+buf=io.BytesIO(); wb.save(buf)
+info=json.dumps({'year':year,'month':month,'ec':len(employees),'pg':len(pages)})
+base64.b64encode(buf.getvalue()).decode()+'|||'+info
+`);
+
+    setProgress(95,'組裝檔案…');
+    const[b64,infoStr]=xlsxResult.split('|||');
+    const info=JSON.parse(infoStr);
+    const bin=atob(b64);
+    const arr=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+    outputBytes=arr;
+    outputName=`員工考勤表_${info.year}${String(info.month).padStart(2,'0')}.xlsx`;
+
+    setProgress(100,'完成！');
+    addLog(`✓ 完成：${info.ec} 位員工，${info.pg} 頁`, 'i');
+    document.getElementById('resultCard').classList.add('show');
+    document.getElementById('resultMeta').textContent=
+      `${info.year}/${info.month} · ${info.ec} 位員工 · ${info.pg} 頁 · ${(arr.length/1024).toFixed(1)} KB`;
+    const btn2=document.getElementById('convertBtn');
+    btn2.className='btn done'; btn2.innerHTML='✓ 已完成';
+    triggerDl();
+    document.getElementById('resultCard').scrollIntoView({behavior:'smooth'});
+
+  }catch(e){
+    addLog('❌ 錯誤：'+e.message,'e');
+    console.error('Convert error:', e);
+    showAlert('轉換失敗：'+e.message);
+    document.getElementById('convertBtn').disabled=false;
+    setProgress(0,'發生錯誤，請重試');
+  }
+}
+
+function triggerDl(){
+  if(!outputBytes)return;
+  const blob=new Blob([outputBytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download=outputName; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),2000);
+}
+function setProgress(pct,txt){
+  document.getElementById('progFill').style.width=pct+'%';
+  document.getElementById('progTxt').textContent=txt;
+}
+function addLog(msg,type=''){
+  const box=document.getElementById('logBox');
+  box.classList.add('show');
+  box.innerHTML+=`<div class="${type==='e'?'e':type==='i'?'i':''}">${msg}</div>`;
+  box.scrollTop=box.scrollHeight;
+}
+</script>
+</body>
+</html>
