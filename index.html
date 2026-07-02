@@ -108,6 +108,17 @@ footer{margin-top:40px;text-align:center;font-size:11px;color:var(--muted);font-
     <div class="tbl-wrap" id="previewWrap"></div>
   </div>
 
+  <div class="card" data-n="!" id="anomalyCard" style="display:none">
+    <div class="card-title">異常打卡查詢</div>
+    <div class="hint" id="anomalyHint" style="border-left-color:var(--red)">
+      以下列出<strong>只有上班沒打下班</strong>或<strong>只有下班沒打上班</strong>的紀錄
+    </div>
+    <div class="stats" id="anomalyStats"></div>
+    <div class="tbl-wrap" id="anomalyWrap"></div>
+    <br>
+    <button class="btn" id="anomalyDlBtn" onclick="downloadAnomaly()" style="box-shadow:4px 4px 0 var(--red)">⬇ 下載異常清單 (CSV)</button>
+  </div>
+
   <div class="card" data-n="3" id="convertCard" style="display:none">
     <div class="card-title">設定 & 產生考勤表</div>
     <div class="settings">
@@ -170,6 +181,8 @@ document.getElementById('fileInput').addEventListener('change',e=>{if(e.target.f
 
 async function loadFile(file){
   document.getElementById('alertBox').className='alert-box';
+  document.getElementById('anomalyCard').style.display='none';
+  document.getElementById('resultCard').classList.remove('show');
   const buf=await file.arrayBuffer();
   fileBytes=new Uint8Array(buf);
   document.getElementById('fiName').textContent=file.name;
@@ -197,12 +210,51 @@ for r in range(2, ws.max_row+1):
     row = [ws.cell(r,c).value for c in range(1,9)]
     if all(v is None for v in row): continue
     rows.append([v2s(v) for v in row])
-json.dumps({"h": hdrs, "r": rows, "sheet": ws.title})
+
+# 讀檔階段就先算出異常打卡（缺上班/缺下班）
+import re as _re
+def _pt(v):
+    s = str(v).strip()
+    if s in ('--','','None'): return None
+    m = _re.search(r'(\\d{1,2}):(\\d{2})', s)
+    return int(m.group(1))*60+int(m.group(2)) if m else None
+def _fm(t): return f"{t//60:02d}:{t%60:02d}" if t is not None else ''
+def _pd(v):
+    m = _re.search(r'(\\d{4})[/\\-](\\d{1,2})[/\\-](\\d{1,2})', str(v))
+    return f"{int(m.group(3)):02d}" if m else None
+
+_mi={}; _mo={}; _ei={}
+for row in rows:
+    if len(row) < 8: continue
+    eid=str(row[0]).strip(); name=str(row[1]).strip(); dept=str(row[2]).strip()
+    day=_pd(row[3]); iv=str(row[6]).strip(); ov=str(row[7]).strip()
+    if not eid or not day: continue
+    k=(eid,day)
+    ti=_pt(iv) if iv not in ('--','','None') else None
+    to=_pt(ov) if ov not in ('--','','None') else None
+    if ti is not None: _mi.setdefault(k,[]).append(ti)
+    if to is not None: _mo.setdefault(k,[]).append(to)
+    _ei[eid]={'name':name,'dept':dept}
+
+anomalies=[]
+for k in set(_mi)|set(_mo):
+    eid,day=k
+    bi=min(_mi.get(k,[])) if _mi.get(k) else None
+    bo=max(_mo.get(k,[])) if _mo.get(k) else None
+    inf=_ei.get(eid,{})
+    if bi is not None and bo is None:
+        anomalies.append({'id':eid,'name':inf.get('name',''),'dept':inf.get('dept',''),'day':day,'in':_fm(bi),'out':'','type':'缺下班打卡'})
+    elif bi is None and bo is not None:
+        anomalies.append({'id':eid,'name':inf.get('name',''),'dept':inf.get('dept',''),'day':day,'in':'','out':_fm(bo),'type':'缺上班打卡'})
+anomalies.sort(key=lambda a:(a['id'],a['day']))
+
+json.dumps({"h": hdrs, "r": rows, "sheet": ws.title, "anomalies": anomalies})
 `);
     const d=JSON.parse(res);
     parsedRows=d.r;
     document.getElementById('fiMeta').textContent+=` · ${d.r.length} 筆 · 工作表：${d.sheet}`;
     showPreview(d.h, d.r);
+    showAnomalies(d.anomalies || []);
     document.getElementById('previewCard').style.display='block';
     document.getElementById('convertCard').style.display='block';
     document.getElementById('convertBtn').disabled=false;
@@ -308,6 +360,7 @@ for row in rows:
     ei[eid] = {'name': name, 'dept': dept}
 
 lookup = {}; emp_stats = {}
+anomalies = []   # 異常打卡：有上班無下班 / 有下班無上班
 for key in set(map_in)|set(map_out):
     eid, day = key
     bi = min(map_in.get(key,  [])) if map_in.get(key)  else None
@@ -321,6 +374,16 @@ for key in set(map_in)|set(map_out):
     if bi is not None: s['workDays'] += 1
     if late:  s['lateCount'] += 1; s['lateTotal']  += late
     if early: s['earlyCount'] += 1; s['earlyTotal'] += early
+    # 收集異常
+    info = ei.get(eid, {})
+    if bi is not None and bo is None:
+        anomalies.append({'id': eid, 'name': info.get('name',''), 'dept': info.get('dept',''),
+                          'day': day, 'in': fm(bi), 'out': '', 'type': '缺下班打卡'})
+    elif bi is None and bo is not None:
+        anomalies.append({'id': eid, 'name': info.get('name',''), 'dept': info.get('dept',''),
+                          'day': day, 'in': '', 'out': fm(bo), 'type': '缺上班打卡'})
+
+anomalies.sort(key=lambda a: (a['id'], a['day']))
 
 employees = [{'id':k,'name':v['name'],'dept':v['dept']} for k,v in sorted(ei.items())]
 
@@ -329,6 +392,7 @@ if not year:
 
 json.dumps({'employees': employees, 'lookup': lookup,
             'emp_stats': emp_stats, 'year': year, 'month': month,
+            'anomalies': anomalies,
             'row_count': len(rows), 'emp_count': len(employees)})
 `);
 
@@ -548,6 +612,45 @@ function triggerDl(){
   const blob=new Blob([outputBytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a'); a.href=url; a.download=outputName; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),2000);
+}
+
+let anomalyData=[];
+function showAnomalies(list){
+  anomalyData=list||[];
+  const card=document.getElementById('anomalyCard');
+  card.style.display='block';
+  const missOut=anomalyData.filter(a=>a.type==='缺下班打卡').length;
+  const missIn =anomalyData.filter(a=>a.type==='缺上班打卡').length;
+  document.getElementById('anomalyStats').innerHTML=
+    `<div class="stat"><div class="stat-n" style="color:var(--red)">${anomalyData.length}</div><div class="stat-l">異常總數</div></div>
+     <div class="stat"><div class="stat-n" style="color:var(--red)">${missOut}</div><div class="stat-l">缺下班打卡</div></div>
+     <div class="stat"><div class="stat-n" style="color:var(--red)">${missIn}</div><div class="stat-l">缺上班打卡</div></div>`;
+  if(!anomalyData.length){
+    document.getElementById('anomalyWrap').innerHTML='<div class="more" style="color:var(--green)">✓ 沒有發現異常打卡紀錄</div>';
+    document.getElementById('anomalyDlBtn').style.display='none';
+    return;
+  }
+  document.getElementById('anomalyDlBtn').style.display='';
+  const rowsHtml=anomalyData.map(a=>{
+    const dcol=a.type==='缺下班打卡'
+      ? `<td style="color:#2d6a4f">${a.in}</td><td style="color:var(--red);font-weight:700">缺</td>`
+      : `<td style="color:var(--red);font-weight:700">缺</td><td style="color:#2d6a4f">${a.out}</td>`;
+    return `<tr><td>${a.id}</td><td>${a.name}</td><td>${a.dept}</td><td>${a.day}日</td>${dcol}<td style="color:var(--red)">${a.type}</td></tr>`;
+  }).join('');
+  document.getElementById('anomalyWrap').innerHTML=
+    `<table><thead><tr><th>工號</th><th>姓名</th><th>部門</th><th>日期</th><th>上班</th><th>下班</th><th>異常類型</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
+}
+
+function downloadAnomaly(){
+  if(!anomalyData.length)return;
+  let csv='\uFEFF工號,姓名,部門,日期,上班打卡,下班打卡,異常類型\n';
+  anomalyData.forEach(a=>{
+    csv+=`${a.id},${a.name},${a.dept},${a.day},${a.in||'缺'},${a.out||'缺'},${a.type}\n`;
+  });
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download='異常打卡清單.csv'; a.click();
   setTimeout(()=>URL.revokeObjectURL(url),2000);
 }
 function setProgress(pct,txt){
