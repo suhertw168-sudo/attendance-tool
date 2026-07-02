@@ -116,7 +116,18 @@ footer{margin-top:40px;text-align:center;font-size:11px;color:var(--muted);font-
     <div class="stats" id="anomalyStats"></div>
     <div class="tbl-wrap" id="anomalyWrap"></div>
     <br>
-    <button class="btn" id="anomalyDlBtn" onclick="downloadAnomaly()" style="box-shadow:4px 4px 0 var(--red)">⬇ 下載異常清單 (CSV)</button>
+    <button class="btn" id="anomalyDlBtn" onclick="downloadAnomaly()" style="box-shadow:4px 4px 0 var(--red)">⬇ 下載異常清單 (Excel)</button>
+
+    <div style="height:1px;background:var(--border);margin:24px 0"></div>
+
+    <div class="card-title">遲到統計</div>
+    <div class="hint" id="lateHint" style="border-left-color:var(--red)">
+      依<strong>標準上班時間</strong>計算，上班打卡晚於標準時間（含寬容分鐘）即列為遲到
+    </div>
+    <div class="stats" id="lateStats"></div>
+    <div class="tbl-wrap" id="lateWrap"></div>
+    <br>
+    <button class="btn" id="lateDlBtn" onclick="downloadLate()" style="box-shadow:4px 4px 0 var(--red)">⬇ 下載遲到清單 (Excel)</button>
   </div>
 
   <div class="card" data-n="3" id="convertCard" style="display:none">
@@ -179,10 +190,18 @@ dz.addEventListener('dragleave',()=>dz.classList.remove('over'));
 dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('over');if(e.dataTransfer.files[0])loadFile(e.dataTransfer.files[0])});
 document.getElementById('fileInput').addEventListener('change',e=>{if(e.target.files[0])loadFile(e.target.files[0])});
 
+// 標準上班時間 / 寬容分鐘改變時，重新計算遲到統計
+['stdIn','grace'].forEach(id=>{
+  document.getElementById(id).addEventListener('change',()=>{
+    if(fileBytes && pyodide) loadFile._recompute && loadFile._recompute();
+  });
+});
+
 async function loadFile(file){
   document.getElementById('alertBox').className='alert-box';
   document.getElementById('anomalyCard').style.display='none';
   document.getElementById('resultCard').classList.remove('show');
+  loadFile._named=false;
   const buf=await file.arrayBuffer();
   fileBytes=new Uint8Array(buf);
   document.getElementById('fiName').textContent=file.name;
@@ -191,6 +210,8 @@ async function loadFile(file){
   if(!pyodide){showAlert('Python 環境尚未就緒，請稍候');return}
   try{
     pyodide.globals.set('_fb', fileBytes);
+    pyodide.globals.set('_std_in_pre', document.getElementById('stdIn').value || '10:00');
+    pyodide.globals.set('_grace_pre',  parseInt(document.getElementById('grace').value) || 0);
     const res=await pyodide.runPythonAsync(`
 import io, json, datetime
 from openpyxl import load_workbook
@@ -236,7 +257,12 @@ for row in rows:
     if to is not None: _mo.setdefault(k,[]).append(to)
     _ei[eid]={'name':name,'dept':dept}
 
+# 標準上班時間（用於遲到計算）
+_sim = _pt(_std_in_pre) or 10*60
+_gr  = int(_grace_pre)
+
 anomalies=[]
+lates=[]
 for k in set(_mi)|set(_mo):
     eid,day=k
     bi=min(_mi.get(k,[])) if _mi.get(k) else None
@@ -246,18 +272,50 @@ for k in set(_mi)|set(_mo):
         anomalies.append({'id':eid,'name':inf.get('name',''),'dept':inf.get('dept',''),'day':day,'in':_fm(bi),'out':'','type':'缺下班打卡'})
     elif bi is None and bo is not None:
         anomalies.append({'id':eid,'name':inf.get('name',''),'dept':inf.get('dept',''),'day':day,'in':'','out':_fm(bo),'type':'缺上班打卡'})
+    # 遲到：有上班打卡且晚於標準上班時間（含寬容）
+    if bi is not None and bi > _sim + _gr:
+        lates.append({'id':eid,'name':inf.get('name',''),'dept':inf.get('dept',''),
+                      'day':day,'in':_fm(bi),'lateMin':bi-_sim})
 anomalies.sort(key=lambda a:(a['id'],a['day']))
+lates.sort(key=lambda a:(a['id'],a['day']))
 
-json.dumps({"h": hdrs, "r": rows, "sheet": ws.title, "anomalies": anomalies})
+json.dumps({"h": hdrs, "r": rows, "sheet": ws.title, "anomalies": anomalies, "lates": lates})
 `);
     const d=JSON.parse(res);
     parsedRows=d.r;
-    document.getElementById('fiMeta').textContent+=` · ${d.r.length} 筆 · 工作表：${d.sheet}`;
+    if(!loadFile._named) document.getElementById('fiMeta').textContent+=` · ${d.r.length} 筆 · 工作表：${d.sheet}`;
+    loadFile._named=true;
     showPreview(d.h, d.r);
-    showAnomalies(d.anomalies || []);
+    showAnomalies(d.anomalies || [], d.lates || []);
     document.getElementById('previewCard').style.display='block';
     document.getElementById('convertCard').style.display='block';
     document.getElementById('convertBtn').disabled=false;
+    // 提供重算（改設定時只重跑解析，不需重選檔案）
+    loadFile._recompute=async()=>{
+      pyodide.globals.set('_std_in_pre', document.getElementById('stdIn').value || '10:00');
+      pyodide.globals.set('_grace_pre',  parseInt(document.getElementById('grace').value) || 0);
+      const r2=await pyodide.runPythonAsync(`
+_sim2=_pt(_std_in_pre) or 10*60
+_gr2=int(_grace_pre)
+_an=[]; _la=[]
+for k in set(_mi)|set(_mo):
+    eid,day=k
+    bi=min(_mi.get(k,[])) if _mi.get(k) else None
+    bo=max(_mo.get(k,[])) if _mo.get(k) else None
+    inf=_ei.get(eid,{})
+    if bi is not None and bo is None:
+        _an.append({'id':eid,'name':inf.get('name',''),'dept':inf.get('dept',''),'day':day,'in':_fm(bi),'out':'','type':'缺下班打卡'})
+    elif bi is None and bo is not None:
+        _an.append({'id':eid,'name':inf.get('name',''),'dept':inf.get('dept',''),'day':day,'in':'','out':_fm(bo),'type':'缺上班打卡'})
+    if bi is not None and bi > _sim2 + _gr2:
+        _la.append({'id':eid,'name':inf.get('name',''),'dept':inf.get('dept',''),'day':day,'in':_fm(bi),'lateMin':bi-_sim2})
+_an.sort(key=lambda a:(a['id'],a['day']))
+_la.sort(key=lambda a:(a['id'],a['day']))
+json.dumps({'anomalies':_an,'lates':_la})
+`);
+      const dd=JSON.parse(r2);
+      showAnomalies(dd.anomalies||[], dd.lates||[]);
+    };
   }catch(e){
     showAlert('讀取失敗：'+e.message);
     console.error(e);
@@ -615,11 +673,14 @@ function triggerDl(){
   setTimeout(()=>URL.revokeObjectURL(url),2000);
 }
 
-let anomalyData=[];
-function showAnomalies(list){
+let anomalyData=[], lateData=[];
+function showAnomalies(list, latelist){
   anomalyData=list||[];
+  lateData=latelist||[];
   const card=document.getElementById('anomalyCard');
   card.style.display='block';
+
+  // ── 異常打卡 ──
   const missOut=anomalyData.filter(a=>a.type==='缺下班打卡').length;
   const missIn =anomalyData.filter(a=>a.type==='缺上班打卡').length;
   document.getElementById('anomalyStats').innerHTML=
@@ -629,28 +690,127 @@ function showAnomalies(list){
   if(!anomalyData.length){
     document.getElementById('anomalyWrap').innerHTML='<div class="more" style="color:var(--green)">✓ 沒有發現異常打卡紀錄</div>';
     document.getElementById('anomalyDlBtn').style.display='none';
-    return;
+  }else{
+    document.getElementById('anomalyDlBtn').style.display='';
+    const rowsHtml=anomalyData.map(a=>{
+      const dcol=a.type==='缺下班打卡'
+        ? `<td style="color:#2d6a4f">${a.in}</td><td style="color:var(--red);font-weight:700">缺</td>`
+        : `<td style="color:var(--red);font-weight:700">缺</td><td style="color:#2d6a4f">${a.out}</td>`;
+      return `<tr><td>${a.id}</td><td>${a.name}</td><td>${a.dept}</td><td>${a.day}日</td>${dcol}<td style="color:var(--red)">${a.type}</td></tr>`;
+    }).join('');
+    document.getElementById('anomalyWrap').innerHTML=
+      `<table><thead><tr><th>工號</th><th>姓名</th><th>部門</th><th>日期</th><th>上班</th><th>下班</th><th>異常類型</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
   }
-  document.getElementById('anomalyDlBtn').style.display='';
-  const rowsHtml=anomalyData.map(a=>{
-    const dcol=a.type==='缺下班打卡'
-      ? `<td style="color:#2d6a4f">${a.in}</td><td style="color:var(--red);font-weight:700">缺</td>`
-      : `<td style="color:var(--red);font-weight:700">缺</td><td style="color:#2d6a4f">${a.out}</td>`;
-    return `<tr><td>${a.id}</td><td>${a.name}</td><td>${a.dept}</td><td>${a.day}日</td>${dcol}<td style="color:var(--red)">${a.type}</td></tr>`;
-  }).join('');
-  document.getElementById('anomalyWrap').innerHTML=
-    `<table><thead><tr><th>工號</th><th>姓名</th><th>部門</th><th>日期</th><th>上班</th><th>下班</th><th>異常類型</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
+
+  // ── 遲到統計 ──
+  const lateEmps=new Set(lateData.map(l=>l.id)).size;
+  const totalLateMin=lateData.reduce((s,l)=>s+l.lateMin,0);
+  document.getElementById('lateStats').innerHTML=
+    `<div class="stat"><div class="stat-n" style="color:var(--red)">${lateData.length}</div><div class="stat-l">遲到次數</div></div>
+     <div class="stat"><div class="stat-n" style="color:var(--red)">${lateEmps}</div><div class="stat-l">遲到人數</div></div>
+     <div class="stat"><div class="stat-n" style="color:var(--red)">${totalLateMin}</div><div class="stat-l">累計遲到(分)</div></div>`;
+  if(!lateData.length){
+    document.getElementById('lateWrap').innerHTML='<div class="more" style="color:var(--green)">✓ 沒有遲到紀錄</div>';
+    document.getElementById('lateDlBtn').style.display='none';
+  }else{
+    document.getElementById('lateDlBtn').style.display='';
+    const lateRows=lateData.map(l=>
+      `<tr><td>${l.id}</td><td>${l.name}</td><td>${l.dept}</td><td>${l.day}日</td><td style="color:#2d6a4f">${l.in}</td><td style="color:var(--red);font-weight:700">${l.lateMin} 分</td></tr>`
+    ).join('');
+    document.getElementById('lateWrap').innerHTML=
+      `<table><thead><tr><th>工號</th><th>姓名</th><th>部門</th><th>日期</th><th>上班打卡</th><th>遲到分鐘</th></tr></thead><tbody>${lateRows}</tbody></table>`;
+  }
 }
 
-function downloadAnomaly(){
-  if(!anomalyData.length)return;
-  let csv='\uFEFF工號,姓名,部門,日期,上班打卡,下班打卡,異常類型\n';
-  anomalyData.forEach(a=>{
-    csv+=`${a.id},${a.name},${a.dept},${a.day},${a.in||'缺'},${a.out||'缺'},${a.type}\n`;
-  });
-  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+async function downloadAnomaly(){
+  if(!anomalyData.length || !pyodide)return;
+  pyodide.globals.set('_data', JSON.stringify(anomalyData));
+  const b64=await pyodide.runPythonAsync(`
+import json, io, base64
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+
+data=json.loads(_data)
+wb=Workbook(); ws=wb.active; ws.title='異常打卡清單'
+
+thin=Side(style='thin', color='999999')
+border=Border(top=thin,bottom=thin,left=thin,right=thin)
+hdr_fill=PatternFill('solid', fgColor='4472C4')
+hdr_font=Font(name='微軟正黑體', bold=True, color='FFFFFF', size=11)
+red_fill=PatternFill('solid', fgColor='FCE4E4')
+cell_font=Font(name='微軟正黑體', size=10)
+center=Alignment(horizontal='center', vertical='center')
+
+headers=['工號','姓名','部門','日期','上班打卡','下班打卡','異常類型']
+for c,h in enumerate(headers,1):
+    cell=ws.cell(1,c,h); cell.fill=hdr_fill; cell.font=hdr_font; cell.border=border; cell.alignment=center
+
+for r,a in enumerate(data,2):
+    vals=[a['id'],a['name'],a['dept'],f"{a['day']}日",a['in'] or '缺',a['out'] or '缺',a['type']]
+    for c,v in enumerate(vals,1):
+        cell=ws.cell(r,c,v); cell.font=cell_font; cell.border=border; cell.alignment=center
+        # 缺的欄位與異常類型加紅底
+        if (c==5 and a['in']=='') or (c==6 and a['out']=='') or c==7:
+            cell.fill=red_fill
+
+widths=[10,14,12,8,11,11,14]
+from openpyxl.utils import get_column_letter
+for i,w in enumerate(widths,1): ws.column_dimensions[get_column_letter(i)].width=w
+ws.freeze_panes='A2'
+
+buf=io.BytesIO(); wb.save(buf)
+base64.b64encode(buf.getvalue()).decode()
+`);
+  dlB64(b64, '異常打卡清單.xlsx');
+}
+
+async function downloadLate(){
+  if(!lateData.length || !pyodide)return;
+  pyodide.globals.set('_data', JSON.stringify(lateData));
+  const b64=await pyodide.runPythonAsync(`
+import json, io, base64
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+from openpyxl.utils import get_column_letter
+
+data=json.loads(_data)
+wb=Workbook(); ws=wb.active; ws.title='遲到清單'
+
+thin=Side(style='thin', color='999999')
+border=Border(top=thin,bottom=thin,left=thin,right=thin)
+hdr_fill=PatternFill('solid', fgColor='C0504D')
+hdr_font=Font(name='微軟正黑體', bold=True, color='FFFFFF', size=11)
+late_fill=PatternFill('solid', fgColor='FCE4E4')
+cell_font=Font(name='微軟正黑體', size=10)
+center=Alignment(horizontal='center', vertical='center')
+
+headers=['工號','姓名','部門','日期','上班打卡','遲到分鐘']
+for c,h in enumerate(headers,1):
+    cell=ws.cell(1,c,h); cell.fill=hdr_fill; cell.font=hdr_font; cell.border=border; cell.alignment=center
+
+for r,l in enumerate(data,2):
+    vals=[l['id'],l['name'],l['dept'],f"{l['day']}日",l['in'],l['lateMin']]
+    for c,v in enumerate(vals,1):
+        cell=ws.cell(r,c,v); cell.font=cell_font; cell.border=border; cell.alignment=center
+        if c==6: cell.fill=late_fill; cell.font=Font(name='微軟正黑體', size=10, bold=True, color='C0504D')
+
+widths=[10,14,12,8,11,10]
+for i,w in enumerate(widths,1): ws.column_dimensions[get_column_letter(i)].width=w
+ws.freeze_panes='A2'
+
+buf=io.BytesIO(); wb.save(buf)
+base64.b64encode(buf.getvalue()).decode()
+`);
+  dlB64(b64, '遲到清單.xlsx');
+}
+
+function dlB64(b64, filename){
+  const bin=atob(b64);
+  const arr=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+  const blob=new Blob([arr],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
   const url=URL.createObjectURL(blob);
-  const a=document.createElement('a'); a.href=url; a.download='異常打卡清單.csv'; a.click();
+  const a=document.createElement('a'); a.href=url; a.download=filename; a.click();
   setTimeout(()=>URL.revokeObjectURL(url),2000);
 }
 function setProgress(pct,txt){
